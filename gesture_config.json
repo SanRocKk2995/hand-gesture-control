@@ -1,0 +1,101 @@
+{
+  "gestures": {
+    "fist": {
+      "action": "space",
+      "enabled": true
+    },
+    "open_palm": {
+      "action": "",
+      "enabled": false
+    },
+    "pointing": {
+      "action": "",
+      "enabled": false
+    },
+    "peace": {
+      "action": "",
+      "enabled": false
+    },
+    "thumbs_up": {
+      "action": "",
+      "enabled": false
+    },
+    "thumbs_down": {
+      "action": "",
+      "enabled": false
+    },
+    "ok": {
+      "action": "",
+      "enabled": false
+    },
+    "rock": {
+      "action": "",
+      "enabled": false
+    },
+    "three": {
+      "action": "",
+      "enabled": false
+    },
+    "four": {
+      "action": "",
+      "enabled": false
+    },
+    "call": {
+      "action": "",
+      "enabled": false
+    },
+    "loose_fist": {
+      "action": "",
+      "enabled": false
+    },
+    "swipe_up": {
+      "action": "scroll_up",
+      "enabled": false
+    },
+    "swipe_down": {
+      "action": "",
+      "enabled": false
+    },
+    "swipe_left": {
+      "action": "",
+      "enabled": false
+    },
+    "swipe_right": {
+      "action": "",
+      "enabled": false
+    },
+    "pinch": {
+      "action": "",
+      "enabled": false
+    },
+    "wave": {
+      "action": "",
+      "enabled": false
+    },
+    "zoom_in": {
+      "action": "",
+      "enabled": false
+    },
+    "zoom_out": {
+      "action": "",
+      "enabled": false
+    }
+  },
+  "settings": {
+    "detection_confidence": 0.7,
+    "fist_threshold": 0.4,
+    "show_landmarks": true,
+    "show_fps": true,
+    "show_gesture": true,
+    "process_every_n_frames": 2,
+    "gesture_cooldown": 15,
+    "low_performance_mode": false,
+    "max_hands": 1,
+    "tracking_confidence": 0.5,
+    "camera_width": 640,
+    "camera_height": 480,
+    "require_face": true,
+    "require_looking": true,
+    "mouse_control": false
+  }
+}
