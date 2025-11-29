@@ -44,12 +44,8 @@
       "action": "",
       "enabled": false
     },
-    "loose_fist": {
-      "action": "",
-      "enabled": false
-    },
     "swipe_up": {
-      "action": "scroll_up",
+      "action": "",
       "enabled": false
     },
     "swipe_down": {
@@ -67,35 +63,26 @@
     "pinch": {
       "action": "",
       "enabled": false
-    },
-    "wave": {
-      "action": "",
-      "enabled": false
-    },
-    "zoom_in": {
-      "action": "",
-      "enabled": false
-    },
-    "zoom_out": {
-      "action": "",
-      "enabled": false
     }
   },
   "settings": {
-    "detection_confidence": 0.7,
-    "fist_threshold": 0.4,
-    "show_landmarks": true,
-    "show_fps": true,
-    "show_gesture": true,
-    "process_every_n_frames": 2,
-    "gesture_cooldown": 15,
-    "low_performance_mode": false,
+    "detection_confidence": 0.64,
+    "mouse_control": false,
+    "auto_start": false,
+    "minimize_to_tray": false,
+    "developer_mode": true,
     "max_hands": 1,
     "tracking_confidence": 0.5,
     "camera_width": 640,
     "camera_height": 480,
+    "process_every_n_frames": 2,
+    "gesture_cooldown": 15,
+    "low_performance_mode": false,
+    "show_landmarks": true,
+    "show_fps": true,
+    "show_gesture": true,
+    "fist_threshold": 0.4,
     "require_face": true,
-    "require_looking": true,
-    "mouse_control": false
+    "require_looking": true
   }
 }

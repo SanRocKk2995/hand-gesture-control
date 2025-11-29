@@ -1,12 +1,10 @@
 
 """
-Hand Gesture Control - Optimized Application
-Phiên bản tối ưu hiệu năng:
-- Chỉ nhận diện cử chỉ được bật trong config
-- Skip frame để giảm CPU
-- Cache kết quả
-- Lazy loading
-- Giảm resolution khi cần
+Hand Gesture Control - User Friendly Application
+Phiên bản thân thiện người dùng:
+- Giao diện đơn giản, dễ sử dụng
+- Chế độ nhà phát triển ẩn các tính năng debug
+- Tối ưu hiệu năng tự động
 """
 
 import sys
@@ -24,10 +22,11 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QMessageBox,
     QTabWidget, QScrollArea, QLineEdit, QSlider, QCheckBox,
-    QGroupBox, QTextEdit, QSpinBox, QComboBox, QSizePolicy
+    QGroupBox, QTextEdit, QSpinBox, QComboBox, QSizePolicy,
+    QStackedWidget, QSystemTrayIcon, QMenu
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
-from PyQt6.QtGui import QPixmap, QImage, QKeySequence
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
+from PyQt6.QtGui import QPixmap, QImage, QKeySequence, QIcon, QFont
 
 import json
 import cv2
@@ -494,36 +493,33 @@ class OptimizedCameraThread(QThread):
 
 
 class MainWindow(QMainWindow):
-    """Cửa sổ chính - Phiên bản tối ưu"""
+    """Cửa sổ chính - Phiên bản thân thiện người dùng"""
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Hand Gesture Control (Optimized)")
-        self.setMinimumSize(800, 500)  # Responsive - cho phép nhỏ hơn
-        self.resize(1200, 700)  # Kích thước mặc định
+        self.setWindowTitle("🤚 Hand Gesture Control")
+        self.setMinimumSize(600, 400)
+        self.resize(900, 600)
         
         self.camera_thread = None
         self.is_running = False
-        self.is_compact_mode = False  # Responsive mode
+        self.is_compact_mode = False
+        self.developer_mode = False  # Chế độ nhà phát triển
         
         self.config_path = os.path.join(base_path, "gesture_config.json")
         self.config = self.load_config()
         
+        # Load developer mode từ config
+        self.developer_mode = self.config.get("settings", {}).get("developer_mode", False)
+        
         self.setup_ui()
         self.apply_styles()
+        self.update_developer_mode_ui()
     
     def resizeEvent(self, event):
         """Xử lý responsive khi resize"""
         super().resizeEvent(event)
-        width = event.size().width()
-        
-        # Compact mode khi cửa sổ nhỏ
-        compact = width < 1000
-        
-        if compact != self.is_compact_mode:
-            self.is_compact_mode = compact
-            self.update_responsive_layout()
-        
+    
     def load_config(self):
         if os.path.exists(self.config_path):
             try:
@@ -547,94 +543,349 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         
-        main_layout = QHBoxLayout(central)
+        main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # === LEFT: Camera ===
-        left_panel = QFrame()
-        left_panel.setObjectName("leftPanel")
-        left_layout = QVBoxLayout(left_panel)
+        # === HEADER BAR ===
+        header_bar = QFrame()
+        header_bar.setObjectName("headerBar")
+        header_bar.setFixedHeight(60)
+        header_layout = QHBoxLayout(header_bar)
+        header_layout.setContentsMargins(20, 0, 20, 0)
+        
+        # Logo và tiêu đề
+        title_label = QLabel("🤚 Hand Gesture Control")
+        title_label.setObjectName("appTitle")
+        title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        header_layout.addWidget(title_label)
+        
+        header_layout.addStretch()
+        
+        # Status indicator
+        self.status_indicator = QLabel("⚪ Chưa chạy")
+        self.status_indicator.setObjectName("statusIndicator")
+        header_layout.addWidget(self.status_indicator)
+        
+        # Developer mode toggle
+        self.dev_mode_btn = QPushButton("🔧")
+        self.dev_mode_btn.setObjectName("devModeBtn")
+        self.dev_mode_btn.setFixedSize(40, 40)
+        self.dev_mode_btn.setToolTip("Bật/Tắt chế độ nhà phát triển")
+        self.dev_mode_btn.clicked.connect(self.toggle_developer_mode)
+        header_layout.addWidget(self.dev_mode_btn)
+        
+        main_layout.addWidget(header_bar)
+        
+        # === CONTENT AREA ===
+        content_widget = QWidget()
+        content_layout = QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        
+        # === LEFT: Camera Panel (chỉ hiện khi developer mode) ===
+        self.left_panel = QFrame()
+        self.left_panel.setObjectName("leftPanel")
+        left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(15, 15, 15, 15)
         
-        header = QLabel("📷 Camera (Optimized)")
+        header = QLabel("📷 Camera Preview")
         header.setObjectName("panelHeader")
         left_layout.addWidget(header)
         
         self.camera_label = QLabel()
         self.camera_label.setObjectName("cameraDisplay")
-        self.camera_label.setMinimumSize(320, 240)  # Responsive min size
+        self.camera_label.setMinimumSize(320, 240)
         self.camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.camera_label.setText("Camera chưa bật\n\nBấm 'Bắt Đầu' để chạy")
-        self.camera_label.setScaledContents(False)  # Giữ tỷ lệ
+        self.camera_label.setText("Camera chưa bật")
+        self.camera_label.setScaledContents(False)
         left_layout.addWidget(self.camera_label, stretch=1)
         
-        # Status
-        status_frame = QFrame()
-        status_layout = QHBoxLayout(status_frame)
-        status_layout.setContentsMargins(0, 10, 0, 0)
-        
-        self.status_label = QLabel("Sẵn sàng")
-        self.status_label.setObjectName("statusLabel")
-        status_layout.addWidget(self.status_label)
-        
-        self.gesture_label = QLabel("")
-        self.gesture_label.setObjectName("gestureLabel")
-        status_layout.addWidget(self.gesture_label)
+        # Debug info (chỉ hiện developer mode)
+        self.debug_frame = QFrame()
+        debug_layout = QHBoxLayout(self.debug_frame)
+        debug_layout.setContentsMargins(0, 10, 0, 0)
         
         self.perf_label = QLabel("")
         self.perf_label.setObjectName("perfLabel")
-        status_layout.addWidget(self.perf_label)
+        debug_layout.addWidget(self.perf_label)
+        debug_layout.addStretch()
+        left_layout.addWidget(self.debug_frame)
         
-        status_layout.addStretch()
-        left_layout.addWidget(status_frame)
+        content_layout.addWidget(self.left_panel, stretch=2)
         
-        # Buttons
-        btn_frame = QFrame()
-        btn_layout = QHBoxLayout(btn_frame)
-        btn_layout.setSpacing(15)
+        # === RIGHT: Main Settings Panel ===
+        self.right_panel = QFrame()
+        self.right_panel.setObjectName("rightPanel")
+        right_layout = QVBoxLayout(self.right_panel)
+        right_layout.setContentsMargins(20, 20, 20, 20)
+        right_layout.setSpacing(15)
         
-        self.start_btn = QPushButton("▶ Bắt Đầu")
-        self.start_btn.setObjectName("startBtn")
+        # === SIMPLE MODE: Nút điều khiển lớn ===
+        self.simple_controls = QFrame()
+        simple_layout = QVBoxLayout(self.simple_controls)
+        simple_layout.setSpacing(20)
+        
+        # Gesture status display - lớn và rõ ràng
+        self.gesture_display = QLabel("✋")
+        self.gesture_display.setObjectName("gestureDisplay")
+        self.gesture_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.gesture_display.setFont(QFont("Segoe UI Emoji", 72))
+        simple_layout.addWidget(self.gesture_display)
+        
+        self.gesture_name_label = QLabel("Sẵn sàng nhận diện cử chỉ")
+        self.gesture_name_label.setObjectName("gestureNameLabel")
+        self.gesture_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.gesture_name_label.setFont(QFont("Segoe UI", 14))
+        simple_layout.addWidget(self.gesture_name_label)
+        
+        self.action_label = QLabel("")
+        self.action_label.setObjectName("actionLabel")
+        self.action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        simple_layout.addWidget(self.action_label)
+        
+        simple_layout.addStretch()
+        
+        # Big Start/Stop Button
+        self.start_btn = QPushButton("▶  Bắt Đầu")
+        self.start_btn.setObjectName("bigStartBtn")
+        self.start_btn.setMinimumHeight(60)
+        self.start_btn.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         self.start_btn.clicked.connect(self.toggle_camera)
-        btn_layout.addWidget(self.start_btn)
+        simple_layout.addWidget(self.start_btn)
         
-        self.pause_btn = QPushButton("⏸ Tạm Dừng")
+        # Pause button
+        self.pause_btn = QPushButton("⏸  Tạm Dừng")
         self.pause_btn.setObjectName("pauseBtn")
         self.pause_btn.setEnabled(False)
         self.pause_btn.clicked.connect(self.toggle_pause)
-        btn_layout.addWidget(self.pause_btn)
+        simple_layout.addWidget(self.pause_btn)
         
-        left_layout.addWidget(btn_frame)
-        self.left_panel = left_panel  # Lưu reference cho responsive
-        main_layout.addWidget(left_panel, stretch=2)
+        right_layout.addWidget(self.simple_controls)
         
-        # === RIGHT: Settings ===
-        right_panel = QFrame()
-        right_panel.setObjectName("rightPanel")
-        self.right_panel = right_panel  # Lưu reference cho responsive
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(15, 15, 15, 15)
+        # === TABS: Cấu hình (đơn giản hơn) ===
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("settingsTabs")
+        self.tabs.addTab(self.create_gesture_tab(), "🤚 Cử Chỉ")
+        self.tabs.addTab(self.create_simple_settings_tab(), "⚙️ Cài Đặt")
         
-        header2 = QLabel("⚙️ Cấu Hình & Tối Ưu")
-        header2.setObjectName("panelHeader")
-        right_layout.addWidget(header2)
+        # Tab developer (chỉ hiện khi bật developer mode)
+        self.dev_performance_tab = self.create_performance_tab()
+        self.dev_settings_tab = self.create_advanced_settings_tab()
+        self.dev_log_tab = self.create_log_tab()
         
-        tabs = QTabWidget()
-        tabs.setObjectName("settingsTabs")
-        tabs.addTab(self.create_gesture_tab(), "🤚 Cử Chỉ")
-        tabs.addTab(self.create_performance_tab(), "⚡ Hiệu Năng")
-        tabs.addTab(self.create_settings_tab(), "🔧 Cài Đặt")
-        tabs.addTab(self.create_log_tab(), "📝 Log")
+        right_layout.addWidget(self.tabs)
         
-        right_layout.addWidget(tabs)
-        
+        # Save button
         save_btn = QPushButton("💾 Lưu Cấu Hình")
         save_btn.setObjectName("saveBtn")
         save_btn.clicked.connect(self.save_and_apply)
         right_layout.addWidget(save_btn)
         
-        main_layout.addWidget(right_panel, stretch=1)
+        content_layout.addWidget(self.right_panel, stretch=1)
+        
+        main_layout.addWidget(content_widget, stretch=1)
+    
+    def toggle_developer_mode(self):
+        """Bật/tắt chế độ nhà phát triển"""
+        self.developer_mode = not self.developer_mode
+        self.config.setdefault("settings", {})["developer_mode"] = self.developer_mode
+        self.update_developer_mode_ui()
+        
+        if self.developer_mode:
+            self.log("🔧 Đã bật chế độ nhà phát triển")
+        else:
+            self.log("🔧 Đã tắt chế độ nhà phát triển")
+    
+    def update_developer_mode_ui(self):
+        """Cập nhật UI theo chế độ developer"""
+        if self.developer_mode:
+            # Hiện camera panel và các tab debug
+            self.left_panel.show()
+            self.dev_mode_btn.setStyleSheet("""
+                QPushButton {
+                    background: #22c55e;
+                    border: none;
+                    border-radius: 8px;
+                    color: white;
+                    font-size: 18px;
+                }
+            """)
+            
+            # Thêm các tab developer
+            if self.tabs.indexOf(self.dev_performance_tab) == -1:
+                self.tabs.addTab(self.dev_performance_tab, "⚡ Hiệu Năng")
+                self.tabs.addTab(self.dev_settings_tab, "🔧 Nâng Cao")
+                self.tabs.addTab(self.dev_log_tab, "📝 Log")
+            
+            # Hiện debug info
+            self.debug_frame.show()
+            self.perf_label.show()
+            
+            # Update window title
+            self.setWindowTitle("🤚 Hand Gesture Control [Developer Mode]")
+            self.resize(1200, 700)
+        else:
+            # Ẩn camera panel
+            self.left_panel.hide()
+            self.dev_mode_btn.setStyleSheet("""
+                QPushButton {
+                    background: #3a3a5a;
+                    border: none;
+                    border-radius: 8px;
+                    color: #888;
+                    font-size: 18px;
+                }
+                QPushButton:hover {
+                    background: #4a4a6a;
+                    color: white;
+                }
+            """)
+            
+            # Xóa các tab developer
+            for i in range(self.tabs.count() - 1, 1, -1):
+                self.tabs.removeTab(i)
+            
+            # Ẩn debug info
+            self.debug_frame.hide()
+            
+            # Update window title
+            self.setWindowTitle("🤚 Hand Gesture Control")
+            self.resize(500, 600)
+    
+    def create_simple_settings_tab(self):
+        """Tab cài đặt đơn giản cho người dùng thường"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(15)
+        
+        settings = self.config.get("settings", {})
+        
+        # Độ nhạy - đơn giản
+        sens_group = QGroupBox("🎯 Độ Nhạy Nhận Diện")
+        sens_layout = QVBoxLayout(sens_group)
+        
+        sens_info = QLabel("Điều chỉnh độ chính xác khi nhận diện cử chỉ tay")
+        sens_info.setWordWrap(True)
+        sens_info.setStyleSheet("color: #888; font-size: 11px;")
+        sens_layout.addWidget(sens_info)
+        
+        self.detection_slider = QSlider(Qt.Orientation.Horizontal)
+        self.detection_slider.setRange(30, 100)
+        self.detection_slider.setValue(int(settings.get("detection_confidence", 0.7) * 100))
+        self.detection_label = QLabel(f"{self.detection_slider.value()}%")
+        self.detection_slider.valueChanged.connect(lambda v: self.detection_label.setText(f"{v}%"))
+        
+        slider_layout = QHBoxLayout()
+        slider_layout.addWidget(QLabel("Thấp"))
+        slider_layout.addWidget(self.detection_slider, stretch=1)
+        slider_layout.addWidget(QLabel("Cao"))
+        slider_layout.addWidget(self.detection_label)
+        sens_layout.addLayout(slider_layout)
+        
+        layout.addWidget(sens_group)
+        
+        # Điều khiển chuột
+        mouse_group = QGroupBox("🖱️ Điều Khiển Chuột")
+        mouse_layout = QVBoxLayout(mouse_group)
+        
+        mouse_info = QLabel("Di chuyển con trỏ chuột bằng cử chỉ tay của bạn")
+        mouse_info.setWordWrap(True)
+        mouse_info.setStyleSheet("color: #888; font-size: 11px;")
+        mouse_layout.addWidget(mouse_info)
+        
+        self.mouse_control_check = QCheckBox("Bật điều khiển chuột bằng tay")
+        self.mouse_control_check.setChecked(settings.get("mouse_control", False))
+        mouse_layout.addWidget(self.mouse_control_check)
+        
+        layout.addWidget(mouse_group)
+        
+        # Theo dõi mắt
+        eye_group = QGroupBox("👁️ Theo Dõi Mắt")
+        eye_layout = QVBoxLayout(eye_group)
+        
+        eye_info = QLabel("Chỉ thực thi cử chỉ khi bạn đang nhìn vào camera (an toàn hơn)")
+        eye_info.setWordWrap(True)
+        eye_info.setStyleSheet("color: #888; font-size: 11px;")
+        eye_layout.addWidget(eye_info)
+        
+        self.require_face_check = QCheckBox("Yêu cầu phát hiện khuôn mặt")
+        self.require_face_check.setChecked(settings.get("require_face", False))
+        eye_layout.addWidget(self.require_face_check)
+        
+        self.require_eye_check = QCheckBox("Yêu cầu đang nhìn vào camera")
+        self.require_eye_check.setChecked(settings.get("require_looking", False))
+        eye_layout.addWidget(self.require_eye_check)
+        
+        layout.addWidget(eye_group)
+        
+        # Khởi động cùng Windows (placeholder)
+        startup_group = QGroupBox("🚀 Khởi Động")
+        startup_layout = QVBoxLayout(startup_group)
+        
+        self.auto_start_check = QCheckBox("Tự động chạy khi khởi động Windows")
+        self.auto_start_check.setChecked(settings.get("auto_start", False))
+        startup_layout.addWidget(self.auto_start_check)
+        
+        self.minimize_to_tray_check = QCheckBox("Thu nhỏ xuống khay hệ thống khi đóng")
+        self.minimize_to_tray_check.setChecked(settings.get("minimize_to_tray", False))
+        startup_layout.addWidget(self.minimize_to_tray_check)
+        
+        layout.addWidget(startup_group)
+        
+        layout.addStretch()
+        scroll.setWidget(content)
+        return scroll
+    
+    def create_advanced_settings_tab(self):
+        """Tab cài đặt nâng cao - chỉ hiện ở developer mode"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(15)
+        
+        settings = self.config.get("settings", {})
+        
+        # Fist threshold
+        fist_group = QGroupBox("✊ Ngưỡng Nắm Đấm")
+        fist_layout = QVBoxLayout(fist_group)
+        
+        self.fist_slider = QSlider(Qt.Orientation.Horizontal)
+        self.fist_slider.setRange(20, 60)
+        self.fist_slider.setValue(int(settings.get("fist_threshold", 0.4) * 100))
+        self.fist_label = QLabel(f"{self.fist_slider.value() / 100:.2f}")
+        self.fist_slider.valueChanged.connect(lambda v: self.fist_label.setText(f"{v / 100:.2f}"))
+        
+        fist_layout.addWidget(self.fist_slider)
+        fist_layout.addWidget(self.fist_label)
+        layout.addWidget(fist_group)
+        
+        # Display options
+        disp_group = QGroupBox("🖥️ Hiển Thị Camera")
+        disp_layout = QVBoxLayout(disp_group)
+        
+        self.show_landmarks_check = QCheckBox("Hiện khung xương tay")
+        self.show_landmarks_check.setChecked(settings.get("show_landmarks", True))
+        disp_layout.addWidget(self.show_landmarks_check)
+        
+        self.show_fps_check = QCheckBox("Hiện FPS")
+        self.show_fps_check.setChecked(settings.get("show_fps", True))
+        disp_layout.addWidget(self.show_fps_check)
+        
+        self.show_gesture_check = QCheckBox("Hiện tên cử chỉ trên camera")
+        self.show_gesture_check.setChecked(settings.get("show_gesture", True))
+        disp_layout.addWidget(self.show_gesture_check)
+        
+        layout.addWidget(disp_group)
+        
+        layout.addStretch()
+        scroll.setWidget(content)
+        return scroll
     
     def create_gesture_tab(self):
         """Tab cử chỉ với checkbox bật/tắt"""
@@ -828,7 +1079,7 @@ class MainWindow(QMainWindow):
         return scroll
     
     def create_performance_tab(self):
-        """Tab cài đặt hiệu năng"""
+        """Tab cài đặt hiệu năng - Developer mode"""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         
@@ -904,103 +1155,128 @@ class MainWindow(QMainWindow):
         scroll.setWidget(content)
         return scroll
     
-    def create_settings_tab(self):
-        """Tab cài đặt chung"""
+    def create_gesture_tab(self):
+        """Tab cử chỉ - danh sách cử chỉ và phím tắt"""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(15)
+        layout.setSpacing(10)
         
-        settings = self.config.get("settings", {})
+        # Info label
+        info = QLabel("💡 Bật các cử chỉ bạn muốn sử dụng và gán phím tắt cho chúng")
+        info.setStyleSheet("color: #fbbf24; font-size: 12px; padding: 10px;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
         
-        # Detection
-        det_group = QGroupBox("🎯 Độ Nhạy")
-        det_layout = QVBoxLayout(det_group)
+        gestures = self.config.get("gestures", {})
         
-        self.detection_slider = QSlider(Qt.Orientation.Horizontal)
-        self.detection_slider.setRange(30, 100)
-        self.detection_slider.setValue(int(settings.get("detection_confidence", 0.7) * 100))
-        self.detection_label = QLabel(f"{self.detection_slider.value()}%")
-        self.detection_slider.valueChanged.connect(lambda v: self.detection_label.setText(f"{v}%"))
+        gesture_list = [
+            ("fist", "✊ Nắm đấm"),
+            ("open_palm", "🖐️ Xòe tay"),
+            ("pointing", "👆 Chỉ tay"),
+            ("peace", "✌️ Hòa bình"),
+            ("thumbs_up", "👍 Ngón cái lên"),
+            ("thumbs_down", "👎 Ngón cái xuống"),
+            ("ok", "👌 OK"),
+            ("rock", "🤘 Rock"),
+            ("three", "3️⃣ Số ba"),
+            ("four", "4️⃣ Số bốn"),
+            ("call", "🤙 Gọi điện"),
+            ("swipe_up", "⬆️ Vuốt lên"),
+            ("swipe_down", "⬇️ Vuốt xuống"),
+            ("swipe_left", "⬅️ Vuốt trái"),
+            ("swipe_right", "➡️ Vuốt phải"),
+            ("pinch", "🤏 Nhéo"),
+        ]
         
-        det_layout.addWidget(QLabel("Độ chính xác phát hiện:"))
-        det_layout.addWidget(self.detection_slider)
-        det_layout.addWidget(self.detection_label)
-        layout.addWidget(det_group)
+        self.gesture_inputs = {}
+        self.gesture_checks = {}
         
-        # Fist threshold
-        fist_group = QGroupBox("✊ Ngưỡng Nắm Đấm")
-        fist_layout = QVBoxLayout(fist_group)
-        
-        self.fist_slider = QSlider(Qt.Orientation.Horizontal)
-        self.fist_slider.setRange(20, 60)
-        self.fist_slider.setValue(int(settings.get("fist_threshold", 0.4) * 100))
-        self.fist_label = QLabel(f"{self.fist_slider.value() / 100:.2f}")
-        self.fist_slider.valueChanged.connect(lambda v: self.fist_label.setText(f"{v / 100:.2f}"))
-        
-        fist_layout.addWidget(self.fist_slider)
-        fist_layout.addWidget(self.fist_label)
-        layout.addWidget(fist_group)
-        
-        # Display
-        disp_group = QGroupBox("🖥️ Hiển Thị")
-        disp_layout = QVBoxLayout(disp_group)
-        
-        self.show_landmarks_check = QCheckBox("Hiện khung xương tay")
-        self.show_landmarks_check.setChecked(settings.get("show_landmarks", True))
-        disp_layout.addWidget(self.show_landmarks_check)
-        
-        self.show_fps_check = QCheckBox("Hiện FPS")
-        self.show_fps_check.setChecked(settings.get("show_fps", True))
-        disp_layout.addWidget(self.show_fps_check)
-        
-        self.show_gesture_check = QCheckBox("Hiện tên cử chỉ")
-        self.show_gesture_check.setChecked(settings.get("show_gesture", True))
-        disp_layout.addWidget(self.show_gesture_check)
-        
-        layout.addWidget(disp_group)
-        
-        # Eye tracking / Face detection
-        eye_group = QGroupBox("👁️ Theo Dõi Mắt")
-        eye_layout = QVBoxLayout(eye_group)
-        
-        eye_info = QLabel("Chỉ thực thi cử chỉ khi người dùng đang nhìn vào camera")
-        eye_info.setWordWrap(True)
-        eye_info.setStyleSheet("color: #888; font-size: 11px;")
-        eye_layout.addWidget(eye_info)
-        
-        self.require_face_check = QCheckBox("Yêu cầu phát hiện khuôn mặt")
-        self.require_face_check.setChecked(settings.get("require_face", False))
-        eye_layout.addWidget(self.require_face_check)
-        
-        self.require_eye_check = QCheckBox("Yêu cầu đang nhìn vào camera")
-        self.require_eye_check.setChecked(settings.get("require_looking", False))
-        eye_layout.addWidget(self.require_eye_check)
-        
-        layout.addWidget(eye_group)
-        
-        # Mouse control
-        mouse_group = QGroupBox("🖱️ Điều Khiển Chuột")
-        mouse_layout = QVBoxLayout(mouse_group)
-        
-        mouse_info = QLabel("Di chuyển chuột theo vị trí ngón trỏ của bạn")
-        mouse_info.setWordWrap(True)
-        mouse_info.setStyleSheet("color: #888; font-size: 11px;")
-        mouse_layout.addWidget(mouse_info)
-        
-        self.mouse_control_check = QCheckBox("Bật điều khiển chuột bằng tay")
-        self.mouse_control_check.setChecked(settings.get("mouse_control", False))
-        mouse_layout.addWidget(self.mouse_control_check)
-        
-        layout.addWidget(mouse_group)
+        for gesture_id, gesture_name in gesture_list:
+            frame = QFrame()
+            frame.setObjectName("gestureCard")
+            frame_layout = QHBoxLayout(frame)
+            frame_layout.setContentsMargins(10, 6, 10, 6)
+            frame_layout.setSpacing(10)
+            
+            # Checkbox bật/tắt
+            check = QCheckBox()
+            current = gestures.get(gesture_id, {})
+            is_enabled = current.get('enabled', False) if isinstance(current, dict) else bool(current)
+            check.setChecked(is_enabled)
+            check.setFixedWidth(25)
+            frame_layout.addWidget(check)
+            self.gesture_checks[gesture_id] = check
+            
+            # Label
+            label = QLabel(gesture_name)
+            label.setMinimumWidth(100)
+            frame_layout.addWidget(label, stretch=1)
+            
+            # Key bind button
+            current_action = ""
+            if isinstance(current, dict):
+                current_action = current.get("action", "")
+            elif current:
+                current_action = str(current)
+            
+            key_btn = KeyBindButton(current_action)
+            key_btn.setMinimumWidth(120)
+            key_btn.setToolTip("Click để gán phím")
+            frame_layout.addWidget(key_btn, stretch=2)
+            self.gesture_inputs[gesture_id] = key_btn
+            
+            # Quick actions dropdown
+            quick_combo = QComboBox()
+            quick_combo.setFixedWidth(40)
+            quick_combo.setToolTip("Hành động nhanh")
+            
+            quick_actions = [
+                ("", "⚡"),
+                ("click", "🖱️ Click"),
+                ("right_click", "🖱️ Click phải"),
+                ("volume_up", "🔊 Tăng âm"),
+                ("volume_down", "🔉 Giảm âm"),
+                ("play_pause", "⏯️ Play/Pause"),
+                ("alt+tab", "🔄 Alt+Tab"),
+                ("win+d", "🖥️ Desktop"),
+                ("ctrl+c", "📋 Copy"),
+                ("ctrl+v", "📋 Paste"),
+            ]
+            for key, name in quick_actions:
+                quick_combo.addItem(name, key)
+            
+            def on_quick_selected(index, btn=key_btn, combo=quick_combo):
+                action = combo.itemData(index)
+                if action:
+                    btn.set_bound_key(action)
+                    combo.setCurrentIndex(0)
+            
+            quick_combo.currentIndexChanged.connect(on_quick_selected)
+            frame_layout.addWidget(quick_combo)
+            
+            # Clear button
+            clear_btn = QPushButton("✕")
+            clear_btn.setFixedSize(24, 24)
+            clear_btn.setToolTip("Xóa")
+            clear_btn.setStyleSheet("""
+                QPushButton { background: transparent; border: none; color: #ff6b6b; font-weight: bold; }
+                QPushButton:hover { color: #ff4444; }
+            """)
+            clear_btn.clicked.connect(lambda checked, btn=key_btn: btn.set_bound_key(""))
+            frame_layout.addWidget(clear_btn)
+            
+            layout.addWidget(frame)
         
         layout.addStretch()
         scroll.setWidget(content)
         return scroll
     
     def create_log_tab(self):
+        """Tab log - chỉ developer mode"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
@@ -1009,107 +1285,154 @@ class MainWindow(QMainWindow):
         self.log_text.setObjectName("logText")
         layout.addWidget(self.log_text)
         
-        clear_btn = QPushButton("Xóa Log")
+        clear_btn = QPushButton("🗑️ Xóa Log")
         clear_btn.clicked.connect(lambda: self.log_text.clear())
         layout.addWidget(clear_btn)
         
         return widget
     
     def log(self, message):
-        self.log_text.append(message)
+        if hasattr(self, 'log_text'):
+            self.log_text.append(f"[{time.strftime('%H:%M:%S')}] {message}")
     
     def apply_styles(self):
         self.setStyleSheet("""
-            * { 
-                background-color: transparent;
-            }
-            QMainWindow { background: #1a1a2e; }
+            * { background-color: transparent; }
+            QMainWindow { background: #0f0f1a; }
             QWidget { background: transparent; color: white; }
+            
+            /* Header */
+            #headerBar { 
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1a1a2e, stop:1 #16213e);
+                border-bottom: 1px solid #333;
+            }
+            #appTitle { color: white; }
+            #statusIndicator { color: #888; font-size: 13px; margin-right: 15px; }
+            #devModeBtn { background: #3a3a5a; border: none; border-radius: 8px; }
+            
+            /* Panels */
             #leftPanel {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #16213e, stop:1 #1a1a2e);
                 border-right: 1px solid #333;
             }
-            #rightPanel {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1a1a2e, stop:1 #16213e);
-            }
-            #panelHeader { color: #fff; font-size: 18px; font-weight: bold; padding: 10px; }
+            #rightPanel { background: #0f0f1a; }
+            #panelHeader { color: #fff; font-size: 16px; font-weight: bold; padding: 8px; }
+            
+            /* Camera display */
             #cameraDisplay {
                 background: #000; border: 2px solid #333; border-radius: 10px;
-                color: #666; font-size: 16px;
+                color: #555; font-size: 14px;
             }
-            #statusLabel { color: #4ade80; font-size: 13px; }
-            #gestureLabel { color: #fbbf24; font-size: 13px; font-weight: bold; margin-left: 15px; }
-            #perfLabel { color: #60a5fa; font-size: 11px; margin-left: 15px; }
+            
+            /* Gesture display */
+            #gestureDisplay { color: white; background: transparent; }
+            #gestureNameLabel { color: #aaa; }
+            #actionLabel { color: #4ade80; font-size: 13px; }
+            
+            /* Buttons */
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4f46e5, stop:1 #3730a3);
-                color: white; border: none; border-radius: 8px;
-                padding: 12px 24px; font-size: 14px; font-weight: bold;
+                background: #3730a3; color: white; border: none;
+                border-radius: 10px; padding: 12px 20px;
+                font-size: 13px; font-weight: bold;
             }
-            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6366f1, stop:1 #4f46e5); }
+            QPushButton:hover { background: #4f46e5; }
             QPushButton:disabled { background: #333; color: #666; }
-            #startBtn { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22c55e, stop:1 #16a34a); }
-            #pauseBtn { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f59e0b, stop:1 #d97706); }
+            
+            #bigStartBtn {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22c55e, stop:1 #16a34a);
+                border-radius: 15px; font-size: 18px;
+            }
+            #bigStartBtn:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4ade80, stop:1 #22c55e); }
+            
+            #pauseBtn { background: #4a4a6a; }
+            #pauseBtn:hover { background: #5a5a7a; }
+            
             #saveBtn { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #8b5cf6, stop:1 #7c3aed); }
+            
+            /* Tabs */
             QTabWidget { background: transparent; }
-            QTabWidget::pane { background: #1e1e3a; border: 1px solid #333; border-radius: 8px; }
-            QTabBar::tab { background: #2a2a4a; color: #aaa; padding: 10px 15px; border-radius: 8px 8px 0 0; margin-right: 2px; }
+            QTabWidget::pane { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; }
+            QTabBar::tab { 
+                background: #252545; color: #888; 
+                padding: 10px 20px; border-radius: 8px 8px 0 0; 
+                margin-right: 2px;
+            }
             QTabBar::tab:selected { background: #4f46e5; color: white; }
+            QTabBar::tab:hover { background: #3a3a5a; color: white; }
+            
+            /* Groups */
             QGroupBox { 
-                color: white; font-weight: bold; border: 1px solid #444; 
-                border-radius: 8px; margin-top: 10px; padding-top: 15px;
-                background: #252545;
+                color: white; font-weight: bold; 
+                border: 1px solid #333; border-radius: 10px; 
+                margin-top: 15px; padding: 15px; padding-top: 25px;
+                background: #1a1a2e;
             }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-            #gestureCard { background: #252545; border: 1px solid #444; border-radius: 8px; padding: 5px; }
-            QFrame { background: transparent; }
-            QLabel { color: white; background: transparent; }
-            QLineEdit {
-                background: #2a2a4a; border: 1px solid #555;
-                border-radius: 6px; padding: 8px; color: white;
+            QGroupBox::title { 
+                subcontrol-origin: margin; left: 15px; 
+                padding: 0 8px; color: #aaa;
             }
-            QLineEdit:focus { border-color: #4f46e5; background: #353560; }
-            QLineEdit::placeholder { color: #666; }
-            QSpinBox {
-                background: #2a2a4a; border: 1px solid #555;
-                border-radius: 6px; padding: 8px; color: white;
+            
+            /* Gesture cards */
+            #gestureCard { 
+                background: #1e1e3a; border: 1px solid #333; 
+                border-radius: 8px; 
             }
-            QSpinBox:focus { border-color: #4f46e5; }
+            #gestureCard:hover { border-color: #4f46e5; background: #252550; }
+            
+            /* Inputs */
+            QLineEdit, QSpinBox {
+                background: #252545; border: 1px solid #444;
+                border-radius: 8px; padding: 10px; color: white;
+            }
+            QLineEdit:focus, QSpinBox:focus { border-color: #4f46e5; }
+            
             QComboBox {
-                background: #2a2a4a; border: 1px solid #555;
-                border-radius: 6px; padding: 8px; color: white;
-                min-height: 20px;
+                background: #252545; border: 1px solid #444;
+                border-radius: 6px; padding: 6px 10px; color: white;
             }
             QComboBox:hover { border-color: #4f46e5; }
-            QComboBox::drop-down {
-                border: none; width: 30px;
-            }
+            QComboBox::drop-down { border: none; width: 25px; }
             QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #888;
-                margin-right: 10px;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #888;
             }
             QComboBox QAbstractItemView {
-                background: #2a2a4a; border: 1px solid #555;
+                background: #1a1a2e; border: 1px solid #444;
                 color: white; selection-background-color: #4f46e5;
-                outline: none;
             }
-            QSlider::groove:horizontal { height: 8px; background: #333; border-radius: 4px; }
-            QSlider::handle:horizontal { background: #4f46e5; width: 20px; margin: -6px 0; border-radius: 10px; }
-            QSlider::sub-page:horizontal { background: #4f46e5; border-radius: 4px; }
-            QCheckBox { color: white; spacing: 8px; background: transparent; }
+            
+            /* Slider */
+            QSlider::groove:horizontal { height: 6px; background: #333; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #4f46e5; width: 18px; margin: -6px 0; border-radius: 9px; }
+            QSlider::sub-page:horizontal { background: #4f46e5; border-radius: 3px; }
+            
+            /* Checkbox */
+            QCheckBox { color: white; spacing: 10px; }
             QCheckBox::indicator { 
-                width: 20px; height: 20px; border-radius: 4px; 
-                border: 2px solid #555; background: #2a2a4a;
+                width: 22px; height: 22px; border-radius: 6px; 
+                border: 2px solid #444; background: #252545;
             }
             QCheckBox::indicator:checked { background: #4f46e5; border-color: #4f46e5; }
-            #logText { background: #111; color: #4ade80; border: 1px solid #333; border-radius: 8px; font-family: Consolas; }
-            QScrollArea { border: none; background: transparent; }
-            QScrollArea > QWidget > QWidget { background: transparent; }
-            QScrollBar:vertical { background: #222; width: 10px; border-radius: 5px; }
-            QScrollBar::handle:vertical { background: #555; border-radius: 5px; min-height: 30px; }
+            QCheckBox::indicator:hover { border-color: #666; }
+            
+            /* Log */
+            #logText { 
+                background: #0a0a15; color: #4ade80; 
+                border: 1px solid #333; border-radius: 8px; 
+                font-family: 'Consolas', monospace; font-size: 11px;
+                padding: 10px;
+            }
+            
+            /* Scroll */
+            QScrollArea { border: none; }
+            QScrollBar:vertical { background: #1a1a2e; width: 8px; border-radius: 4px; }
+            QScrollBar::handle:vertical { background: #444; border-radius: 4px; min-height: 30px; }
+            QScrollBar::handle:vertical:hover { background: #555; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            
+            /* Performance label */
+            #perfLabel { color: #60a5fa; font-size: 11px; }
         """)
     
     def toggle_camera(self):
@@ -1133,16 +1456,28 @@ class MainWindow(QMainWindow):
         self.camera_thread.error_occurred.connect(self.on_error)
         self.camera_thread.performance_stats.connect(self.on_performance_stats)
         
-        self.camera_thread.show_landmarks = self.show_landmarks_check.isChecked()
-        self.camera_thread.show_fps = self.show_fps_check.isChecked()
-        self.camera_thread.show_gesture = self.show_gesture_check.isChecked()
+        # Developer mode settings
+        if self.developer_mode:
+            self.camera_thread.show_landmarks = self.show_landmarks_check.isChecked()
+            self.camera_thread.show_fps = self.show_fps_check.isChecked()
+            self.camera_thread.show_gesture = self.show_gesture_check.isChecked()
+        else:
+            self.camera_thread.show_landmarks = False
+            self.camera_thread.show_fps = False
+            self.camera_thread.show_gesture = True
         
         self.camera_thread.start()
         
         self.is_running = True
-        self.start_btn.setText("⏹ Dừng")
-        self.start_btn.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ef4444, stop:1 #dc2626);")
+        self.start_btn.setText("⏹  Dừng")
+        self.start_btn.setStyleSheet("""
+            #bigStartBtn {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ef4444, stop:1 #dc2626);
+            }
+        """)
         self.pause_btn.setEnabled(True)
+        self.status_indicator.setText("🟢 Đang chạy")
+        self.status_indicator.setStyleSheet("color: #4ade80;")
     
     def stop_camera(self):
         if self.camera_thread:
@@ -1150,23 +1485,37 @@ class MainWindow(QMainWindow):
             self.camera_thread = None
         
         self.is_running = False
-        self.start_btn.setText("▶ Bắt Đầu")
+        self.start_btn.setText("▶  Bắt Đầu")
         self.start_btn.setStyleSheet("")
         self.pause_btn.setEnabled(False)
         self.camera_label.setText("Camera đã dừng")
+        self.status_indicator.setText("⚪ Đã dừng")
+        self.status_indicator.setStyleSheet("color: #888;")
+        self.gesture_display.setText("✋")
+        self.gesture_name_label.setText("Sẵn sàng nhận diện cử chỉ")
+        self.action_label.setText("")
         self.log("⏹ Đã dừng")
     
     def toggle_pause(self):
         if self.camera_thread:
             self.camera_thread.paused = not self.camera_thread.paused
-            self.pause_btn.setText("▶ Tiếp Tục" if self.camera_thread.paused else "⏸ Tạm Dừng")
+            if self.camera_thread.paused:
+                self.pause_btn.setText("▶  Tiếp Tục")
+                self.status_indicator.setText("🟡 Tạm dừng")
+                self.status_indicator.setStyleSheet("color: #fbbf24;")
+            else:
+                self.pause_btn.setText("⏸  Tạm Dừng")
+                self.status_indicator.setText("🟢 Đang chạy")
+                self.status_indicator.setStyleSheet("color: #4ade80;")
     
     def update_frame(self, frame):
+        if not self.developer_mode:
+            return  # Không hiện camera khi không ở developer mode
+        
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
         
-        # Responsive: scale theo kích thước label hiện tại
         label_size = self.camera_label.size()
         scaled = QPixmap.fromImage(qimg).scaled(
             label_size, Qt.AspectRatioMode.KeepAspectRatio,
@@ -1174,24 +1523,33 @@ class MainWindow(QMainWindow):
         )
         self.camera_label.setPixmap(scaled)
     
-    def update_responsive_layout(self):
-        """Cập nhật layout khi thay đổi kích thước"""
-        if self.is_compact_mode:
-            # Compact: Ẩn một số phần tử, thu gọn
-            self.perf_label.hide()
-            self.left_panel.setMinimumWidth(300)
-        else:
-            # Full: Hiện tất cả
-            self.perf_label.show()
-            self.left_panel.setMinimumWidth(400)
-    
     def on_gesture_detected(self, gesture, action):
-        self.gesture_label.setText(f"🤚 {gesture} → {action}")
+        # Cập nhật UI thân thiện
+        gesture_icons = {
+            'fist': '✊', 'open_palm': '🖐️', 'pointing': '👆',
+            'peace': '✌️', 'thumbs_up': '👍', 'thumbs_down': '👎',
+            'ok': '👌', 'rock': '🤘', 'three': '3️⃣', 'four': '4️⃣',
+            'call': '🤙', 'pinch': '🤏', 'swipe_up': '⬆️',
+            'swipe_down': '⬇️', 'swipe_left': '⬅️', 'swipe_right': '➡️'
+        }
+        
+        icon = gesture_icons.get(gesture, '🤚')
+        self.gesture_display.setText(icon)
+        self.gesture_name_label.setText(gesture.replace('_', ' ').title())
+        self.action_label.setText(f"→ {action}")
+        
         self.log(f"🤚 {gesture} → {action}")
-        QTimer.singleShot(2000, lambda: self.gesture_label.setText(""))
+        
+        # Reset sau 2 giây
+        QTimer.singleShot(2000, lambda: self.reset_gesture_display())
+    
+    def reset_gesture_display(self):
+        if self.is_running:
+            self.gesture_display.setText("👀")
+            self.gesture_name_label.setText("Đang theo dõi...")
+            self.action_label.setText("")
     
     def on_status_update(self, status):
-        self.status_label.setText(status)
         self.log(f"ℹ️ {status}")
     
     def on_error(self, error):
@@ -1200,20 +1558,22 @@ class MainWindow(QMainWindow):
         self.stop_camera()
     
     def on_performance_stats(self, stats):
-        self.perf_label.setText(f"⚡ {stats['process_time_ms']:.1f}ms | Skip:{stats['frame_skip']}")
-        self.stats_label.setText(
-            f"FPS: {stats['fps']:.1f}\n"
-            f"Thời gian xử lý: {stats['process_time_ms']:.1f}ms\n"
-            f"Cử chỉ đang bật: {stats['enabled_gestures']}\n"
-            f"Frame skip: {stats['frame_skip']}"
-        )
+        if self.developer_mode:
+            self.perf_label.setText(f"⚡ {stats['process_time_ms']:.1f}ms | FPS: {stats['fps']:.0f}")
+            if hasattr(self, 'stats_label'):
+                self.stats_label.setText(
+                    f"FPS: {stats['fps']:.1f}\n"
+                    f"Thời gian xử lý: {stats['process_time_ms']:.1f}ms\n"
+                    f"Cử chỉ đang bật: {stats['enabled_gestures']}\n"
+                    f"Frame skip: {stats['frame_skip']}"
+                )
     
     def update_config_from_ui(self):
-        # Gestures với enabled flag
+        # Gestures
         gestures = {}
         for gesture_id, check in self.gesture_checks.items():
             key_btn = self.gesture_inputs[gesture_id]
-            action = key_btn.get_bound_key()  # Lấy key từ KeyBindButton
+            action = key_btn.get_bound_key()
             gestures[gesture_id] = {
                 "action": action if action else "",
                 "enabled": check.isChecked()
@@ -1221,35 +1581,45 @@ class MainWindow(QMainWindow):
         self.config["gestures"] = gestures
         
         # Settings
-        self.config["settings"] = {
+        settings = self.config.get("settings", {})
+        settings.update({
             "detection_confidence": self.detection_slider.value() / 100,
-            "fist_threshold": self.fist_slider.value() / 100,
-            "show_landmarks": self.show_landmarks_check.isChecked(),
-            "show_fps": self.show_fps_check.isChecked(),
-            "show_gesture": self.show_gesture_check.isChecked(),
-            "process_every_n_frames": self.frame_skip_spin.value(),
-            "gesture_cooldown": self.cooldown_spin.value(),
-            "low_performance_mode": self.low_perf_check.isChecked(),
+            "mouse_control": self.mouse_control_check.isChecked(),
+            "auto_start": self.auto_start_check.isChecked(),
+            "minimize_to_tray": self.minimize_to_tray_check.isChecked(),
+            "developer_mode": self.developer_mode,
             "max_hands": 1,
             "tracking_confidence": 0.5,
             "camera_width": 640,
             "camera_height": 480,
-            "require_face": self.require_face_check.isChecked(),
-            "require_looking": self.require_eye_check.isChecked(),
-            "mouse_control": self.mouse_control_check.isChecked()
-        }
+        })
+        
+        # Developer mode settings
+        if self.developer_mode and hasattr(self, 'frame_skip_spin'):
+            settings.update({
+                "process_every_n_frames": self.frame_skip_spin.value(),
+                "gesture_cooldown": self.cooldown_spin.value(),
+                "low_performance_mode": self.low_perf_check.isChecked(),
+                "show_landmarks": self.show_landmarks_check.isChecked(),
+                "show_fps": self.show_fps_check.isChecked(),
+                "show_gesture": self.show_gesture_check.isChecked(),
+                "fist_threshold": self.fist_slider.value() / 100,
+                "require_face": self.require_face_check.isChecked(),
+                "require_looking": self.require_eye_check.isChecked(),
+            })
+        
+        self.config["settings"] = settings
     
     def save_and_apply(self):
         self.update_config_from_ui()
-        self.save_config()
-        
-        enabled = sum(1 for g, c in self.gesture_checks.items() if c.isChecked())
-        self.log(f"✅ Đã lưu! {enabled} cử chỉ được bật")
-        
-        if self.is_running:
-            self.log("🔄 Khởi động lại để áp dụng...")
-            self.stop_camera()
-            QTimer.singleShot(500, self.start_camera)
+        if self.save_config():
+            enabled = sum(1 for g, c in self.gesture_checks.items() if c.isChecked())
+            self.log(f"✅ Đã lưu! {enabled} cử chỉ được bật")
+            
+            if self.is_running:
+                self.log("🔄 Khởi động lại để áp dụng...")
+                self.stop_camera()
+                QTimer.singleShot(500, self.start_camera)
     
     def closeEvent(self, event):
         if self.camera_thread:
