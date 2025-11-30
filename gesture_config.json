@@ -2,7 +2,7 @@
   "gestures": {
     "fist": {
       "action": "space",
-      "enabled": true
+      "enabled": false
     },
     "open_palm": {
       "action": "",
@@ -76,13 +76,27 @@
     "camera_width": 640,
     "camera_height": 480,
     "process_every_n_frames": 2,
-    "gesture_cooldown": 15,
+    "gesture_cooldown": 16,
     "low_performance_mode": false,
     "show_landmarks": true,
     "show_fps": true,
     "show_gesture": true,
     "fist_threshold": 0.4,
     "require_face": true,
-    "require_looking": true
+    "require_looking": true,
+    "mouse_speed": 5,
+    "mouse_smoothing": true,
+    "app_mode": "gaming",
+    "sound_enabled": true,
+    "screen_flash": false,
+    "show_notification": true,
+    "zone_enabled": false,
+    "zone_size": 70,
+    "hotkey_toggle": "ctrl+shift+g",
+    "hotkey_pause": "ctrl+shift+p",
+    "start_minimized": false,
+    "auto_run": false,
+    "camera_index": 0,
+    "camera_backend": 1400
   }
 }

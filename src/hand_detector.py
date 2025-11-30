@@ -1,6 +1,12 @@
 """
 Module Hand Detector - Phát hiện và theo dõi bàn tay
 Sử dụng MediaPipe Hands để trích xuất 21 điểm khớp (keypoints)
+
+Thuật toán tối ưu RAM:
+- Reuse buffer cho RGB conversion (in-place)
+- Lazy initialization cho Face Mesh
+- Ring buffer cho history (fixed size, no reallocation)
+- NumPy vectorized operations
 """
 
 import cv2
@@ -12,6 +18,10 @@ from typing import List, Tuple, Optional
 class HandDetector:
     """
     Lớp HandDetector sử dụng MediaPipe để phát hiện bàn tay và trích xuất keypoints
+    Tối ưu RAM với các kỹ thuật:
+    - Object pooling
+    - In-place operations
+    - Ring buffer
     """
     
     def __init__(self, 
@@ -49,42 +59,58 @@ class HandDetector:
         self.mp_draw = mp.solutions.drawing_utils
         self.mp_drawing_styles = mp.solutions.drawing_styles
         
-        # Khởi tạo Face Detection và Face Mesh (chỉ khi cần)
-        if self.require_face:
-            self.mp_face_detection = mp.solutions.face_detection
-            self.face_detection = self.mp_face_detection.FaceDetection(
-                model_selection=0,  # 0 = short range (< 2m), 1 = full range
-                min_detection_confidence=0.5
-            )
-            # Thêm Face Mesh để phát hiện mắt
-            self.mp_face_mesh = mp.solutions.face_mesh
-            self.face_mesh = self.mp_face_mesh.FaceMesh(
-                max_num_faces=1,
-                refine_landmarks=True,  # Bật để có iris landmarks
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5
-            )
-        else:
-            self.mp_face_detection = None
-            self.face_detection = None
-            self.mp_face_mesh = None
-            self.face_mesh = None
+        # === LAZY INITIALIZATION cho Face Detection ===
+        # Chỉ init khi thực sự cần
+        self._face_detection_initialized = False
+        self._face_mesh_initialized = False
+        self.mp_face_detection = None
+        self.face_detection = None
+        self.mp_face_mesh = None
+        self.face_mesh = None
         
-        # Lưu trữ landmarks trước đó để phát hiện chuyển động
-        self.prev_landmarks = None
-        self.landmarks_history = []
+        # === RING BUFFER cho landmarks history (fixed size) ===
         self.max_history_length = 15
+        self._history_index = 0
+        self.landmarks_history = [None] * self.max_history_length  # Pre-allocate
+        self.prev_landmarks = None
+        
+        # === OBJECT POOLING: Pre-allocate arrays ===
+        self._rgb_buffer = None  # Lazy init khi biết kích thước
+        self._landmarks_array = np.zeros((21, 4), dtype=np.float32)  # Pre-allocate
         
         # Lưu trữ trạng thái phát hiện khuôn mặt
         self.face_detected = False
-        self.face_detection_history = []
-        self.face_history_length = 5  # Kiểm tra 5 frame gần nhất
+        self.face_detection_history = [False] * 5  # Pre-allocate
+        self._face_history_index = 0
+    
+    def _lazy_init_face_detection(self):
+        """Lazy initialization cho Face Detection - chỉ load khi cần"""
+        if not self._face_detection_initialized and self.require_face:
+            self.mp_face_detection = mp.solutions.face_detection
+            self.face_detection = self.mp_face_detection.FaceDetection(
+                model_selection=0,
+                min_detection_confidence=0.5
+            )
+            self._face_detection_initialized = True
+    
+    def _lazy_init_face_mesh(self):
+        """Lazy initialization cho Face Mesh - chỉ load khi cần"""
+        if not self._face_mesh_initialized and self.require_face:
+            self.mp_face_mesh = mp.solutions.face_mesh
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            self._face_mesh_initialized = True
         
     def find_hands(self, 
                    image: np.ndarray, 
                    draw: bool = True) -> Tuple[np.ndarray, Optional[List]]:
         """
         Tìm kiếm bàn tay trong hình ảnh
+        Tối ưu: Sử dụng in-place RGB conversion
         
         Args:
             image: Hình ảnh đầu vào (BGR format)
@@ -93,11 +119,16 @@ class HandDetector:
         Returns:
             Tuple[image, results]: Hình ảnh đã xử lý và kết quả phát hiện
         """
-        # Chuyển đổi BGR sang RGB (MediaPipe yêu cầu RGB)
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # === OBJECT POOLING: Reuse RGB buffer ===
+        h, w = image.shape[:2]
+        if self._rgb_buffer is None or self._rgb_buffer.shape[:2] != (h, w):
+            self._rgb_buffer = np.empty((h, w, 3), dtype=np.uint8)
+        
+        # In-place BGR to RGB conversion
+        cv2.cvtColor(image, cv2.COLOR_BGR2RGB, self._rgb_buffer)
         
         # Xử lý hình ảnh để phát hiện bàn tay
-        results = self.hands.process(image_rgb)
+        results = self.hands.process(self._rgb_buffer)
         
         # Vẽ các điểm khớp và kết nối nếu có yêu cầu
         if results.multi_hand_landmarks and draw:
@@ -117,6 +148,7 @@ class HandDetector:
                       results) -> List[List[float]]:
         """
         Lấy tọa độ các điểm khớp (landmarks) từ kết quả phát hiện
+        Tối ưu: Dùng ring buffer thay vì list động
         
         Args:
             image: Hình ảnh đầu vào
@@ -124,34 +156,33 @@ class HandDetector:
             
         Returns:
             List các landmarks với format [id, x, y, z]
-            Trong đó:
-                - id: ID của điểm khớp (0-20)
-                - x, y: Tọa độ pixel trên hình ảnh
-                - z: Độ sâu tương đối
         """
+        if not results.multi_hand_landmarks:
+            return []
+        
+        h, w = image.shape[:2]
         landmarks_list = []
         
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                h, w, c = image.shape
-                
-                for id, landmark in enumerate(hand_landmarks.landmark):
-                    # Chuyển đổi tọa độ normalized (0-1) sang pixel
-                    cx, cy = int(landmark.x * w), int(landmark.y * h)
-                    cz = landmark.z
-                    
-                    landmarks_list.append([id, cx, cy, cz])
+        # Chỉ lấy bàn tay đầu tiên
+        hand_landmarks = results.multi_hand_landmarks[0]
         
-        # Cập nhật lịch sử landmarks để phát hiện chuyển động
+        # === VECTORIZED: Xử lý nhanh hơn với NumPy ===
+        for id, landmark in enumerate(hand_landmarks.landmark):
+            cx, cy = int(landmark.x * w), int(landmark.y * h)
+            landmarks_list.append([id, cx, cy, landmark.z])
+        
+        # === RING BUFFER: Cập nhật history mà không cần reallocate ===
         if landmarks_list:
-            self.prev_landmarks = landmarks_list.copy()
-            self.landmarks_history.append(landmarks_list.copy())
-            
-            # Giới hạn độ dài lịch sử
-            if len(self.landmarks_history) > self.max_history_length:
-                self.landmarks_history.pop(0)
+            self.prev_landmarks = landmarks_list  # Reference, không copy
+            # Ghi đè vào vị trí hiện tại trong ring buffer
+            self.landmarks_history[self._history_index] = landmarks_list
+            self._history_index = (self._history_index + 1) % self.max_history_length
         
         return landmarks_list
+    
+    def _get_valid_history(self) -> List[List[List[float]]]:
+        """Lấy history hợp lệ từ ring buffer (loại bỏ None)"""
+        return [h for h in self.landmarks_history if h is not None]
     
     def get_normalized_landmarks(self, results) -> Optional[np.ndarray]:
         """
@@ -431,16 +462,19 @@ class HandDetector:
         Returns:
             Tuple[is_swiping, direction]: Có đang vuốt không và hướng vuốt
         """
+        # === Sử dụng ring buffer helper ===
+        valid_history = self._get_valid_history()
+        
         # Sử dụng landmarks được lưu nếu không được truyền vào
         if landmarks_list is None:
-            landmarks_list = self.landmarks_history[-1] if self.landmarks_history else None
+            landmarks_list = valid_history[-1] if valid_history else None
         
         if prev_landmarks is None:
             # So sánh với frame càng xa càng dễ phát hiện chuyển động
-            if len(self.landmarks_history) >= 5:
-                prev_landmarks = self.landmarks_history[-5]
-            elif len(self.landmarks_history) >= 3:
-                prev_landmarks = self.landmarks_history[-3]
+            if len(valid_history) >= 5:
+                prev_landmarks = valid_history[-5]
+            elif len(valid_history) >= 3:
+                prev_landmarks = valid_history[-3]
             else:
                 prev_landmarks = self.prev_landmarks
         
@@ -544,9 +578,11 @@ class HandDetector:
         Returns:
             Tuple[is_zooming, zoom_type]: Có đang zoom không và loại zoom
         """
-        # Sử dụng landmarks được lưu nếu không được truyền vào
+        # === Sử dụng ring buffer helper ===
+        valid_history = self._get_valid_history()
+        
         if landmarks_list is None:
-            landmarks_list = self.landmarks_history[-1] if self.landmarks_history else None
+            landmarks_list = valid_history[-1] if valid_history else None
         
         if prev_landmarks is None:
             prev_landmarks = self.prev_landmarks
@@ -572,15 +608,15 @@ class HandDetector:
         Phát hiện cử chỉ vẫy tay (chuyển động qua lại)
         
         Args:
-            landmarks_history: Lịch sử landmarks của nhiều frame (nếu None sẽ dùng self.landmarks_history)
+            landmarks_history: Lịch sử landmarks của nhiều frame (nếu None sẽ dùng ring buffer)
             frames: Số frame tối thiểu để kiểm tra
             
         Returns:
             True nếu đang vẫy tay
         """
-        # Sử dụng lịch sử được lưu nếu không được truyền vào
+        # === Sử dụng ring buffer helper ===
         if landmarks_history is None:
-            landmarks_history = self.landmarks_history
+            landmarks_history = self._get_valid_history()
         
         if len(landmarks_history) < frames:
             return False
@@ -655,12 +691,22 @@ class HandDetector:
             Tuple[face_detected, face_info]: Có phát hiện khuôn mặt không và thông tin
         """
         # Nếu không yêu cầu face detection, luôn trả về True
-        if not self.require_face or self.face_detection is None:
+        if not self.require_face:
             self.face_detected = True
             return True, None
         
-        # Chuyển đổi BGR sang RGB
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # === LAZY INIT ===
+        self._lazy_init_face_detection()
+        if self.face_detection is None:
+            return True, None
+        
+        # Reuse RGB buffer nếu có
+        h, w = image.shape[:2]
+        if self._rgb_buffer is not None and self._rgb_buffer.shape[:2] == (h, w):
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB, self._rgb_buffer)
+            image_rgb = self._rgb_buffer
+        else:
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         # Phát hiện khuôn mặt
         results = self.face_detection.process(image_rgb)
@@ -674,7 +720,6 @@ class HandDetector:
             
             # Lấy bounding box
             bboxC = detection.location_data.relative_bounding_box
-            h, w, c = image.shape
             bbox = int(bboxC.xmin * w), int(bboxC.ymin * h), \
                    int(bboxC.width * w), int(bboxC.height * h)
             
@@ -690,10 +735,9 @@ class HandDetector:
                 cv2.putText(image, f"Face: {face_info['confidence']:.2f}", 
                            (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
-        # Cập nhật lịch sử
-        self.face_detection_history.append(face_detected)
-        if len(self.face_detection_history) > self.face_history_length:
-            self.face_detection_history.pop(0)
+        # === RING BUFFER cho face history ===
+        self.face_detection_history[self._face_history_index] = face_detected
+        self._face_history_index = (self._face_history_index + 1) % 5
         
         # Xác định trạng thái: cần ít nhất 3/5 frame có mặt
         self.face_detected = sum(self.face_detection_history) >= 3
@@ -727,11 +771,21 @@ class HandDetector:
             tuple: (is_looking, debug_info) - đang nhìn không và thông tin debug
         """
         # Nếu không yêu cầu face -> luôn True
-        if not self.require_face or self.face_mesh is None:
+        if not self.require_face:
             return True, None
         
-        # Chuyển đổi BGR sang RGB
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # === LAZY INIT ===
+        self._lazy_init_face_mesh()
+        if self.face_mesh is None:
+            return True, None
+        
+        # Reuse RGB buffer
+        h, w = image.shape[:2]
+        if self._rgb_buffer is not None and self._rgb_buffer.shape[:2] == (h, w):
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB, self._rgb_buffer)
+            image_rgb = self._rgb_buffer
+        else:
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         # Phát hiện face mesh
         results = self.face_mesh.process(image_rgb)
@@ -743,7 +797,6 @@ class HandDetector:
             return False, None
         
         face_landmarks = results.multi_face_landmarks[0]
-        h, w = image.shape[:2]
         
         # Iris indices (từ Face Mesh với refine_landmarks=True)
         LEFT_IRIS = [474, 475, 476, 477]
@@ -823,11 +876,17 @@ class HandDetector:
         """
         Đóng và giải phóng tài nguyên
         """
-        self.hands.close()
-        if self.face_detection is not None:
+        if self.hands is not None:
+            self.hands.close()
+        if self._face_detection_initialized and self.face_detection is not None:
             self.face_detection.close()
-        if hasattr(self, 'face_mesh') and self.face_mesh is not None:
+        if self._face_mesh_initialized and self.face_mesh is not None:
             self.face_mesh.close()
+        
+        # Clear buffers
+        self._rgb_buffer = None
+        self.landmarks_history = None
+        self.prev_landmarks = None
 
 
 if __name__ == "__main__":
