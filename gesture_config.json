@@ -2,7 +2,7 @@
   "gestures": {
     "fist": {
       "action": "space",
-      "enabled": false
+      "enabled": true
     },
     "open_palm": {
       "action": "",
@@ -76,7 +76,7 @@
     "camera_width": 640,
     "camera_height": 480,
     "process_every_n_frames": 2,
-    "gesture_cooldown": 16,
+    "gesture_cooldown": 5,
     "low_performance_mode": false,
     "show_landmarks": true,
     "show_fps": true,
